@@ -12,7 +12,7 @@ import (
 func TestParseArgsStopsAtFirstNpmArg(t *testing.T) {
 	cli, err := parseArgs([]string{"--no-net", "--rw", "./out", "install", "--save-dev", "vite"})
 	if err != nil {
-		t.Fatalf("parseArgs retornou erro: %v", err)
+		t.Fatalf("parseArgs returned error: %v", err)
 	}
 	if cli.noNet == nil || !*cli.noNet {
 		t.Fatalf("--no-net was not recognized")
