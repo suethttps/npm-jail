@@ -1,0 +1,67 @@
+# GoReleaser - https://goreleaser.com
+# Build e publicacao das releases do npm-jail.
+# Roda no CI a cada tag "v*" (veja .github/workflows/release.yml) e tambem
+# pode ser testado localmente com:  goreleaser release --snapshot --clean
+version: 2
+
+project_name: npm-jail
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: npm-jail
+    main: .
+    binary: npm-jail
+    env:
+      - CGO_ENABLED=0
+    # npm-jail depende de bubblewrap (bwrap), que so existe no Linux.
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: npm-jail
+    # Nome no formato OS_ARCH que o backend "github"/ubi do mise reconhece
+    # automaticamente. Ex.: npm-jail_Linux_x86_64.tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}aarch64
+      {{- else }}{{ .Arch }}{{ end }}
+    formats: [tar.gz]
+    files:
+      - README.md
+      - LICENSE*
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: suethttps
+    name: npm-jail
+  draft: false
+  prerelease: auto

@@ -35,6 +35,10 @@ import (
 
 const configName = ".npm-jail"
 
+// version e injetada no build de release pelo goreleaser (-ldflags). Em
+// builds locais (go build) fica "dev".
+var version = "dev"
+
 const usage = `npm-jail - roda npm dentro de um sandbox bubblewrap
 
 USO:
@@ -61,6 +65,7 @@ FLAGS DO npm-jail (devem vir ANTES dos argumentos do npm):
     --verbose, -v      Imprime a linha completa do bwrap antes de executar.
     --dry-run          Imprime a linha do bwrap e sai (nao executa).
     --help, -h         Mostra esta ajuda.
+    --version          Mostra a versao e sai.
 
 ARQUIVO .npm-jail (JSON, opcional, no diretorio do projeto):
     {
@@ -176,6 +181,9 @@ func parseArgs(in []string) (cliFlags, error) {
 		switch a {
 		case "--help", "-h":
 			fmt.Print(usage)
+			os.Exit(0)
+		case "--version":
+			fmt.Println("npm-jail " + version)
 			os.Exit(0)
 		case "--init":
 			c.doInit = true

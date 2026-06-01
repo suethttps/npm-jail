@@ -32,6 +32,18 @@ There is no test suite. Verify changes by:
    ```
    This exercises the real threat model (a lifecycle script) end to end.
 
+## Releasing / distribution
+
+- Distribution is binary-only via GitHub releases — users never clone. Install is
+  `mise use -g github:suethttps/npm-jail` or the `install.sh` curl one-liner.
+- `.goreleaser.yaml` defines the build (Linux amd64/arm64 only — bwrap is Linux).
+  `.github/workflows/release.yml` runs it on every `v*` tag; `ci.yml` validates
+  build/vet/goreleaser-config on PRs.
+- Archive name is `npm-jail_Linux_<x86_64|aarch64>.tar.gz` — keep this template
+  intact, it's what mise's `github`/ubi backend matches against.
+- `var version` in `main.go` is overridden at release build time via
+  `-ldflags -X main.version=<tag>` (exposed by `--version`); local builds say `dev`.
+
 ## Conventions
 
 - **Stdlib only.** `go.mod` has zero dependencies; keep it that way (the config
