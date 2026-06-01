@@ -51,14 +51,32 @@ your architecture, and puts it on `PATH`. Pin a version with
 
 ### curl
 
+Linux x86_64:
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/suethttps/npm-jail/master/install.sh | sh
+curl -fsSL https://github.com/suethttps/npm-jail/releases/latest/download/npm-jail_Linux_x86_64.tar.gz | tar xz
+sudo mv npm-jail /usr/local/bin/
 ```
 
-Installs into `~/.local/bin` by default. Override with `NPM_JAIL_BIN_DIR` or pin a
-version with `NPM_JAIL_VERSION=v0.1.0`.
+Linux aarch64:
 
-Both methods fetch a prebuilt binary from the [GitHub releases](https://github.com/suethttps/npm-jail/releases).
+```bash
+curl -fsSL https://github.com/suethttps/npm-jail/releases/latest/download/npm-jail_Linux_aarch64.tar.gz | tar xz
+sudo mv npm-jail /usr/local/bin/
+```
+
+To pin a version, replace `latest/download` with `download/v0.1.0`.
+
+### Arch Linux (AUR)
+
+```bash
+yay -S npm-jail-bin
+```
+
+The AUR package depends on `bubblewrap` and installs the same prebuilt Linux
+binary published in GitHub Releases.
+
+All install methods fetch a prebuilt binary from the [GitHub releases](https://github.com/suethttps/npm-jail/releases).
 
 ## Build from source (development only)
 
@@ -124,9 +142,10 @@ resolved from the project; `~/` expands to `$HOME`.
 ## Releasing
 
 Releases are fully automated by [GoReleaser](https://goreleaser.com) via GitHub
-Actions. Every merge to `master` runs `auto-release`, which tests the project,
-creates the next patch tag (`v0.1.0`, then `v0.1.1`, etc.), and publishes the
-GitHub release.
+Actions. Merges to `master` that change binary-affecting files run
+`auto-release`, which tests the project, creates the next patch tag (`v0.1.0`,
+then `v0.1.1`, etc.), and publishes the GitHub release. Documentation, CI-only
+changes and repo metadata changes do not create a new app release by themselves.
 
 Manual releases are still supported by pushing a `v*` tag:
 
@@ -138,7 +157,9 @@ git push origin v0.1.0
 The release workflows build the Linux `amd64`/`arm64` binaries, package them as
 `npm-jail_Linux_<arch>.tar.gz` (the naming `mise`/`ubi` auto-detect), generate
 checksums and a changelog, and publish the GitHub release, which is what both
-install methods above consume. Test the build locally without publishing with
+direct download and `mise` consume. If `AUR_SSH_PRIVATE_KEY` is configured in
+the repository secrets, the workflows also update `npm-jail-bin` in the AUR.
+Test the build locally without publishing with
 `goreleaser release --snapshot --clean`.
 
 ## How it works

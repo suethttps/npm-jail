@@ -1,11 +1,17 @@
 name: auto-release
 
-# After a merge lands on master, create the next patch tag and publish the
-# release from the same workflow. Tags pushed with GITHUB_TOKEN do not trigger
-# other workflows, so this cannot rely on release.yml being triggered afterward.
+# After a binary-affecting merge lands on master, create the next patch tag and
+# publish the release from the same workflow. Tags pushed with GITHUB_TOKEN do
+# not trigger other workflows, so this cannot rely on release.yml being
+# triggered afterward.
 on:
   push:
     branches: [master]
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - ".goreleaser.yaml"
 
 permissions:
   contents: write
@@ -71,3 +77,10 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish AUR package
+        if: steps.tag.outputs.release_needed == 'true'
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          VERSION: ${{ steps.tag.outputs.tag }}
+        run: bash .github/scripts/publish-aur.sh
