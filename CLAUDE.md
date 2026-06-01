@@ -23,9 +23,10 @@ mise exec -- go build -o npm-jail .     # build
 ./npm-jail --help
 ```
 
-There is no test suite. Verify changes by:
-1. `--dry-run` to inspect the generated `bwrap` command line.
-2. Functional checks in a scratch dir — run a `package.json` script that
+Unit tests live in `main_test.go`. Verify changes by:
+1. `mise exec -- go test ./...` for unit coverage.
+2. `--dry-run` to inspect the generated `bwrap` command line.
+3. Functional checks in a scratch dir — run a `package.json` script that
    inspects the filesystem from inside the jail, e.g.:
    ```bash
    npm-jail run inspect   # script does fs.readdirSync(os.homedir()), tries ~/.ssh, etc.
@@ -49,8 +50,7 @@ There is no test suite. Verify changes by:
 - **Stdlib only.** `go.mod` has zero dependencies; keep it that way (the config
   file is JSON via `encoding/json`, not TOML, specifically to avoid a dep).
 - Everything lives in a single `main.go`.
-- Code comments are in Portuguese; user-facing strings (`usage`, errors) are in
-  Portuguese too. README and this file are in English.
+- Code comments and user-facing strings (`usage`, errors) are in English.
 
 ## Architecture (`main.go`)
 

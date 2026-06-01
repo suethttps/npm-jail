@@ -120,16 +120,20 @@ resolved from the project; `~/` expands to `$HOME`.
 ## Releasing
 
 Releases are fully automated by [GoReleaser](https://goreleaser.com) via GitHub
-Actions. To cut a release, push a `v*` tag:
+Actions. Every merge to `master` runs `auto-release`, which tests the project,
+creates the next patch tag (`v0.1.0`, then `v0.1.1`, etc.), and publishes the
+GitHub release.
+
+Manual releases are still supported by pushing a `v*` tag:
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The `release` workflow builds the Linux `amd64`/`arm64` binaries, packages them as
-`npm-jail_Linux_<arch>.tar.gz` (the naming `mise`/`ubi` auto-detect), generates
-checksums and a changelog, and publishes the GitHub release — which is what both
+The release workflows build the Linux `amd64`/`arm64` binaries, package them as
+`npm-jail_Linux_<arch>.tar.gz` (the naming `mise`/`ubi` auto-detect), generate
+checksums and a changelog, and publish the GitHub release, which is what both
 install methods above consume. Test the build locally without publishing with
 `goreleaser release --snapshot --clean`.
 

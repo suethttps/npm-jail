@@ -1,7 +1,7 @@
 # GoReleaser - https://goreleaser.com
-# Build e publicacao das releases do npm-jail.
-# Roda no CI a cada tag "v*" (veja .github/workflows/release.yml) e tambem
-# pode ser testado localmente com:  goreleaser release --snapshot --clean
+# Builds and publishes npm-jail releases.
+# Runs in CI for every "v*" tag (see .github/workflows/release.yml) and can
+# also be tested locally with:  goreleaser release --snapshot --clean
 version: 2
 
 project_name: npm-jail
@@ -16,7 +16,7 @@ builds:
     binary: npm-jail
     env:
       - CGO_ENABLED=0
-    # npm-jail depende de bubblewrap (bwrap), que so existe no Linux.
+    # npm-jail depends on bubblewrap (bwrap), which only exists on Linux.
     goos:
       - linux
     goarch:
@@ -29,8 +29,8 @@ builds:
 
 archives:
   - id: npm-jail
-    # Nome no formato OS_ARCH que o backend "github"/ubi do mise reconhece
-    # automaticamente. Ex.: npm-jail_Linux_x86_64.tar.gz
+    # Name in the OS_ARCH format that mise's "github"/ubi backend recognizes
+    # automatically. Example: npm-jail_Linux_x86_64.tar.gz
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
