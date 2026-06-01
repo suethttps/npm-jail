@@ -1,7 +1,9 @@
 name: release
 
-# Publish a new release whenever a "v*" tag is pushed.
+# Publish a new release whenever a "v*" tag is pushed manually.
 #   git tag v0.1.0 && git push origin v0.1.0
+# Merges to master are handled by auto-release.yml because tags pushed from a
+# workflow with GITHUB_TOKEN do not trigger another workflow.
 on:
   push:
     tags:
