@@ -1,6 +1,6 @@
 name: ci
 
-# Sanidade em cada push/PR: tudo compila, vet limpo, goreleaser valido.
+# Sanity checks on each push/PR: build, clean vet and valid goreleaser config.
 on:
   push:
     branches: [master]

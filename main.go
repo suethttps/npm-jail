@@ -1,27 +1,29 @@
-// npm-jail roda comandos npm dentro de um sandbox bubblewrap (bwrap).
+// npm-jail runs npm commands inside a bubblewrap (bwrap) sandbox.
 //
-// Modelo de seguranca (padrao, sem flags):
-//   - $HOME vira um tmpfs vazio (efemero): .ssh, .aws, .gnupg, tokens,
-//     historico de shell etc. simplesmente NAO existem dentro do jail.
-//   - Apenas o diretorio do projeto (cwd) e montado read-write.
-//   - O sistema (/usr, /etc, /opt) entra read-only.
-//   - O toolchain do Node (node/npm/npx) entra read-only.
-//   - O cache do npm (~/.npm) entra read-write para reaproveitar downloads.
-//   - ~/.npmrc entra read-only (so e montado se existir).
-//   - PID/UTS/IPC/cgroup ficam isolados em namespaces proprios.
-//   - Rede e compartilhada com o host por padrao (npm install precisa);
-//     use --no-net para isolar tambem a rede.
+// Security model (default, no flags):
+//   - $HOME becomes an empty tmpfs (ephemeral): .ssh, .aws, .gnupg, tokens,
+//     shell history etc. simply do NOT exist inside the jail.
+//   - Only the project directory (cwd) is mounted read-write.
+//   - The system (/usr, /etc, /opt) is mounted read-only.
+//   - The Node toolchain (node/npm/npx) is mounted read-only.
+//   - The npm cache (~/.npm) is mounted read-write to reuse downloads.
+//   - ~/.npmrc is mounted read-only, only if it exists.
+//   - PID/UTS/IPC/cgroup are isolated in their own namespaces.
+//   - Network is shared with the host by default (npm install needs it);
+//     use --no-net to isolate the network too.
 //
-// Config por projeto:
-//   Um arquivo .npm-jail (JSON) no diretorio atual e lido automaticamente.
-//   As flags da CLI tem prioridade sobre ele. Veja "npm-jail --init".
+// Per-project config:
 //
-// Uso:
-//   npm-jail [flags do npm-jail] <argumentos do npm>
-//   npm-jail install express
-//   npm-jail --no-net run build
-//   npm-jail --rw ./dist ci
-//   npm-jail --dry-run install        # so mostra a linha do bwrap
+//	A .npm-jail file (JSON) in the current directory is read automatically.
+//	CLI flags take precedence over it. See "npm-jail --init".
+//
+// Usage:
+//
+//	npm-jail [npm-jail flags] <npm arguments>
+//	npm-jail install express
+//	npm-jail --no-net run build
+//	npm-jail --rw ./dist ci
+//	npm-jail --dry-run install        # only prints the bwrap command line
 package main
 
 import (
@@ -35,50 +37,52 @@ import (
 
 const configName = ".npm-jail"
 
-// version e injetada no build de release pelo goreleaser (-ldflags). Em
-// builds locais (go build) fica "dev".
+// version is injected in release builds by goreleaser (-ldflags). Local builds
+// (go build) keep it as "dev".
 var version = "dev"
 
-const usage = `npm-jail - roda npm dentro de um sandbox bubblewrap
+var lookPath = exec.LookPath
 
-USO:
-    npm-jail [flags do npm-jail] <argumentos do npm>
+const usage = `npm-jail - run npm inside a bubblewrap sandbox
 
-EXEMPLOS:
+USAGE:
+    npm-jail [npm-jail flags] <npm arguments>
+
+EXAMPLES:
     npm-jail install express
     npm-jail --no-net run build
     npm-jail --rw ./out --ro ~/.config/some ci
     npm-jail --dry-run install
-    npm-jail --init                    # gera um .npm-jail de exemplo
+    npm-jail --init                    # creates a sample .npm-jail
 
-FLAGS DO npm-jail (devem vir ANTES dos argumentos do npm):
-    --no-net           Isola a rede (--unshare-net). npm install que baixa
-                       pacotes vai falhar; bom para builds offline.
-    --net              Forca a rede LIGADA (sobrepoe no_net do .npm-jail).
-    --rw PATH          Monta PATH adicional read-write (pode repetir).
-    --ro PATH          Monta PATH adicional read-only (pode repetir).
-    --allow-global     Deixa o toolchain do Node read-write (permite npm i -g).
-    --share-home       NAO usa tmpfs no $HOME (expoe o home real). Inseguro;
-                       use so para depurar.
-    --no-config        Ignora o arquivo .npm-jail do projeto.
-    --init             Cria um .npm-jail de exemplo no diretorio atual e sai.
-    --verbose, -v      Imprime a linha completa do bwrap antes de executar.
-    --dry-run          Imprime a linha do bwrap e sai (nao executa).
-    --help, -h         Mostra esta ajuda.
-    --version          Mostra a versao e sai.
+FLAGS for npm-jail (must come BEFORE npm arguments):
+    --no-net           Isolate the network (--unshare-net). npm install that
+                       downloads packages will fail; useful for offline builds.
+    --net              Force network ON (overrides no_net from .npm-jail).
+    --rw PATH          Mount an additional PATH read-write (repeatable).
+    --ro PATH          Mount an additional PATH read-only (repeatable).
+    --allow-global     Mount the Node toolchain read-write (allows npm i -g).
+    --share-home       Do NOT tmpfs $HOME (exposes the real home). Insecure;
+                       use only for debugging.
+    --no-config        Ignore the project's .npm-jail file.
+    --init             Create a sample .npm-jail in the current directory and exit.
+    --verbose, -v      Print the full bwrap command line before executing.
+    --dry-run          Print the bwrap command line and exit without executing.
+    --help, -h         Show this help.
+    --version          Show the version and exit.
 
-ARQUIVO .npm-jail (JSON, opcional, no diretorio do projeto):
+PROJECT .npm-jail FILE (JSON, optional, in the project directory):
     {
       "no_net": false,
       "allow_global": false,
       "rw": ["./out"],
-      "ro": ["~/.config/algum"]
+      "ro": ["~/.config/something"]
     }
-    Tudo que vier depois da primeira coisa que nao for flag conhecida (ou
-    depois de "--") e repassado intacto para o npm.
+    Everything after the first token that is not a known flag (or after "--")
+    is passed to npm unchanged.
 `
 
-// config e o estado final ja resolvido (arquivo + CLI).
+// config is the final resolved state (file + CLI).
 type config struct {
 	noNet       bool
 	allowGlobal bool
@@ -90,7 +94,7 @@ type config struct {
 	npmArgs     []string
 }
 
-// fileConfig e o formato do arquivo .npm-jail.
+// fileConfig is the .npm-jail file format.
 type fileConfig struct {
 	NoNet       bool     `json:"no_net"`
 	AllowGlobal bool     `json:"allow_global"`
@@ -98,9 +102,9 @@ type fileConfig struct {
 	RO          []string `json:"ro"`
 }
 
-// cliFlags guarda o que veio da linha de comando. Booleanos sao ponteiros
-// para distinguir "nao informado" de "informado como false", permitindo que
-// a CLI sobreponha o arquivo de forma previsivel.
+// cliFlags stores what came from the command line. Booleans are pointers to
+// distinguish "not provided" from "provided as false", allowing the CLI to
+// override the file predictably.
 type cliFlags struct {
 	noNet       *bool
 	allowGlobal *bool
@@ -123,7 +127,7 @@ func main() {
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "npm-jail: nao consegui determinar o diretorio atual")
+		fmt.Fprintln(os.Stderr, "npm-jail: could not determine the current directory")
 		os.Exit(1)
 	}
 
@@ -132,7 +136,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "npm-jail: "+err.Error())
 			os.Exit(1)
 		}
-		fmt.Println("npm-jail: criado " + filepath.Join(cwd, configName))
+		fmt.Println("npm-jail: created " + filepath.Join(cwd, configName))
 		return
 	}
 
@@ -168,7 +172,7 @@ func main() {
 		if exit, ok := err.(*exec.ExitError); ok {
 			os.Exit(exit.ExitCode())
 		}
-		fmt.Fprintln(os.Stderr, "npm-jail: falha ao executar bwrap: "+err.Error())
+		fmt.Fprintln(os.Stderr, "npm-jail: failed to execute bwrap: "+err.Error())
 		os.Exit(1)
 	}
 }
@@ -204,20 +208,20 @@ func parseArgs(in []string) (cliFlags, error) {
 		case "--rw":
 			i++
 			if i >= len(in) {
-				return c, fmt.Errorf("--rw exige um PATH")
+				return c, fmt.Errorf("--rw requires a PATH")
 			}
 			c.rw = append(c.rw, in[i])
 		case "--ro":
 			i++
 			if i >= len(in) {
-				return c, fmt.Errorf("--ro exige um PATH")
+				return c, fmt.Errorf("--ro requires a PATH")
 			}
 			c.ro = append(c.ro, in[i])
 		case "--":
 			c.npmArgs = append(c.npmArgs, in[i+1:]...)
 			return c, nil
 		default:
-			// Primeira coisa nao reconhecida: dali em diante e tudo do npm.
+			// First unknown token: everything from here on belongs to npm.
 			c.npmArgs = append(c.npmArgs, in[i:]...)
 			return c, nil
 		}
@@ -225,8 +229,8 @@ func parseArgs(in []string) (cliFlags, error) {
 	return c, nil
 }
 
-// resolveConfig junta o arquivo .npm-jail (defaults) com as flags da CLI
-// (prioridade). Listas rw/ro sao unidas; booleanos da CLI sobrepoem.
+// resolveConfig merges the .npm-jail file (defaults) with CLI flags
+// (precedence). rw/ro lists are merged; CLI booleans override.
 func resolveConfig(cwd string, cli cliFlags) (config, error) {
 	var fc fileConfig
 	if !cli.noConfig {
@@ -260,7 +264,7 @@ func resolveConfig(cwd string, cli cliFlags) (config, error) {
 	return cfg, nil
 }
 
-// loadConfig le .npm-jail do diretorio do projeto. Retorna nil se nao existir.
+// loadConfig reads .npm-jail from the project directory. Returns nil if missing.
 func loadConfig(cwd string) (*fileConfig, error) {
 	path := filepath.Join(cwd, configName)
 	data, err := os.ReadFile(path)
@@ -268,11 +272,11 @@ func loadConfig(cwd string) (*fileConfig, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("nao consegui ler %s: %w", configName, err)
+		return nil, fmt.Errorf("could not read %s: %w", configName, err)
 	}
 	var fc fileConfig
 	if err := json.Unmarshal(data, &fc); err != nil {
-		return nil, fmt.Errorf("%s invalido (JSON): %w", configName, err)
+		return nil, fmt.Errorf("%s is invalid JSON: %w", configName, err)
 	}
 	return &fc, nil
 }
@@ -298,7 +302,7 @@ func writeSampleConfig(cwd string) error {
 func buildBwrapArgs(cwd string, cfg config) ([]string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return nil, fmt.Errorf("nao consegui determinar o $HOME")
+		return nil, fmt.Errorf("could not determine $HOME")
 	}
 
 	toolchain, binDir, err := resolveNodeToolchain()
@@ -309,14 +313,14 @@ func buildBwrapArgs(cwd string, cfg config) ([]string, error) {
 	var a []string
 	add := func(xs ...string) { a = append(a, xs...) }
 
-	// Isolamento de namespaces e seguranca basica.
+	// Namespace isolation and basic security.
 	add("--die-with-parent")
 	add("--unshare-pid", "--unshare-uts", "--unshare-ipc", "--unshare-cgroup-try")
 	if cfg.noNet {
 		add("--unshare-net")
 	}
 
-	// Raiz do sistema, read-only. /usr + recriacao dos symlinks usr-merge.
+	// System root, read-only. /usr + usr-merge symlink recreation.
 	add("--ro-bind", "/usr", "/usr")
 	for _, link := range []string{"/bin", "/sbin", "/lib", "/lib64", "/lib32"} {
 		addRootEntry(&a, link)
@@ -327,31 +331,31 @@ func buildBwrapArgs(cwd string, cfg config) ([]string, error) {
 		}
 	}
 
-	// Pseudo-filesystems e dirs efemeros.
+	// Pseudo-filesystems and ephemeral dirs.
 	add("--proc", "/proc")
 	add("--dev", "/dev")
 	add("--tmpfs", "/tmp")
 	add("--tmpfs", "/run")
 
-	// Com rede compartilhada precisamos do resolv.conf funcionando.
+	// With shared network we need a working resolv.conf.
 	if !cfg.noNet {
 		addResolvConf(&a)
 	}
 
-	// $HOME efemero (esconde tudo) e depois remonta so o necessario.
+	// Ephemeral $HOME (hides everything), then remount only what is needed.
 	if !cfg.shareHome {
 		add("--tmpfs", home)
 	}
 
-	// Toolchain do Node (node/npm/npx). Vem DEPOIS do tmpfs do home,
-	// pois normalmente vive dentro do $HOME (ex.: mise).
+	// Node toolchain (node/npm/npx). Comes AFTER the home tmpfs because it often
+	// lives under $HOME (for example, mise).
 	if cfg.allowGlobal {
 		add("--bind", toolchain, toolchain)
 	} else {
 		add("--ro-bind", toolchain, toolchain)
 	}
 
-	// Cache do npm (read-write) e .npmrc (read-only, se existir).
+	// npm cache (read-write) and .npmrc (read-only, if it exists).
 	cache := npmCacheDir(home)
 	add("--bind-try", cache, cache)
 	npmrc := filepath.Join(home, ".npmrc")
@@ -359,10 +363,10 @@ func buildBwrapArgs(cwd string, cfg config) ([]string, error) {
 		add("--ro-bind", npmrc, npmrc)
 	}
 
-	// Diretorio do projeto: read-write.
+	// Project directory: read-write.
 	add("--bind", cwd, cwd)
 
-	// Montagens extras pedidas pelo usuario (arquivo + CLI).
+	// Extra mounts requested by the user (file + CLI).
 	for _, p := range cfg.roExtra {
 		abs := mustAbs(home, p)
 		add("--ro-bind-try", abs, abs)
@@ -372,25 +376,25 @@ func buildBwrapArgs(cwd string, cfg config) ([]string, error) {
 		add("--bind-try", abs, abs)
 	}
 
-	// Ambiente: herda o do host, mas fixa HOME, PATH e cwd.
+	// Environment: inherit from host, but pin HOME, PATH and cwd.
 	path := binDir + ":/usr/bin:/usr/local/bin"
 	add("--setenv", "HOME", home)
 	add("--setenv", "PATH", path)
 	add("--chdir", cwd)
 
-	// Comando final.
+	// Final command.
 	add("--", "npm")
 	add(cfg.npmArgs...)
 	return a, nil
 }
 
-// addResolvConf garante DNS dentro do jail quando a rede e compartilhada.
+// addResolvConf ensures DNS inside the jail when the network is shared.
 //
-// Em distros com systemd-resolved, /etc/resolv.conf e um symlink para algo
-// dentro de /run (que zeramos com tmpfs). Como /etc esta read-only, nao da
-// para criar arquivo la; entao montamos o arquivo real no DESTINO do symlink,
-// que cai em /run (tmpfs gravavel), fazendo o symlink voltar a resolver.
-// Se resolv.conf for um arquivo comum, o bind read-only de /etc ja resolve.
+// On distros with systemd-resolved, /etc/resolv.conf is a symlink to something
+// under /run (which we replace with tmpfs). Since /etc is read-only, we cannot
+// create a file there; instead, bind the real file at the symlink TARGET, which
+// lands under /run (writable tmpfs), making the symlink resolve again. If
+// resolv.conf is a regular file, the read-only /etc bind already covers it.
 func addResolvConf(a *[]string) {
 	real, err := filepath.EvalSymlinks("/etc/resolv.conf")
 	if err != nil {
@@ -398,7 +402,7 @@ func addResolvConf(a *[]string) {
 	}
 	fi, err := os.Lstat("/etc/resolv.conf")
 	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
-		return // arquivo comum: ja veio no --ro-bind /etc
+		return // regular file: already included by --ro-bind /etc
 	}
 	target, err := os.Readlink("/etc/resolv.conf")
 	if err != nil {
@@ -410,12 +414,13 @@ func addResolvConf(a *[]string) {
 	*a = append(*a, "--ro-bind", real, target)
 }
 
-// addRootEntry replica uma entrada de raiz (/bin, /lib, ...): se for symlink
-// (layout usr-merge), recria o symlink; se for diretorio real, monta read-only.
+// addRootEntry replicates a root entry (/bin, /lib, ...): if it is a symlink
+// (usr-merge layout), recreate the symlink; if it is a real directory, mount it
+// read-only.
 func addRootEntry(a *[]string, p string) {
 	fi, err := os.Lstat(p)
 	if err != nil {
-		return // nao existe nesta distro
+		return // does not exist on this distro
 	}
 	if fi.Mode()&os.ModeSymlink != 0 {
 		target, err := os.Readlink(p)
@@ -429,23 +434,24 @@ func addRootEntry(a *[]string, p string) {
 	}
 }
 
-// resolveNodeToolchain acha a raiz do toolchain do Node a partir do binario
-// node no PATH. Retorna (dir do toolchain, dir dos binarios).
+// resolveNodeToolchain finds the Node toolchain root from the node binary on
+// PATH. Returns (toolchain dir, binary dir).
 //
 // Ex.: /home/u/.local/share/mise/installs/node/25.8.0/bin/node
-//   -> toolchain = /home/u/.local/share/mise/installs/node/25.8.0
-//   -> binDir    = /home/u/.local/share/mise/installs/node/25.8.0/bin
+//
+//	-> toolchain = /home/u/.local/share/mise/installs/node/25.8.0
+//	-> binDir    = /home/u/.local/share/mise/installs/node/25.8.0/bin
 func resolveNodeToolchain() (string, string, error) {
-	nodePath, err := exec.LookPath("node")
+	nodePath, err := lookPath("node")
 	if err != nil {
-		return "", "", fmt.Errorf("node nao encontrado no PATH")
+		return "", "", fmt.Errorf("node not found on PATH")
 	}
 	real, err := filepath.EvalSymlinks(nodePath)
 	if err != nil {
-		return "", "", fmt.Errorf("nao consegui resolver o caminho do node: %w", err)
+		return "", "", fmt.Errorf("could not resolve node path: %w", err)
 	}
 	binDir := filepath.Dir(real)      // .../bin
-	toolchain := filepath.Dir(binDir) // .../<versao>
+	toolchain := filepath.Dir(binDir) // .../<version>
 	return toolchain, binDir, nil
 }
 
@@ -480,7 +486,7 @@ func mustAbs(home, p string) string {
 	return abs
 }
 
-// shellQuote so serve para imprimir a linha do bwrap de forma legivel.
+// shellQuote is only used to print the bwrap command line readably.
 func shellQuote(args []string) string {
 	var b strings.Builder
 	for i, s := range args {

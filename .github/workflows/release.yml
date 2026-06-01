@@ -1,6 +1,6 @@
 name: release
 
-# Publica uma nova release sempre que uma tag "v*" for empurrada.
+# Publish a new release whenever a "v*" tag is pushed.
 #   git tag v0.1.0 && git push origin v0.1.0
 on:
   push:
@@ -8,7 +8,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write # necessario para o goreleaser criar a release e subir assets
+  contents: write # required for goreleaser to create the release and upload assets
 
 jobs:
   goreleaser:
@@ -17,7 +17,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # goreleaser precisa do historico/tags pro changelog
+          fetch-depth: 0 # goreleaser needs history/tags for the changelog
 
       - name: Set up Go
         uses: actions/setup-go@v5
