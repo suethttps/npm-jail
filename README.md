@@ -32,6 +32,9 @@ your `~/.ssh`, `~/.aws`, `~/.gnupg`, shell history, nor write outside the projec
 - Linux with `bwrap` (bubblewrap) — `pacman -S bubblewrap` / `apt install bubblewrap`
 - `node`/`npm` on `PATH` (tested with Node via [mise](https://mise.jdx.dev/))
 
+macOS is not supported natively: `npm-jail` depends on Linux namespaces through
+`bubblewrap`, and releases only ship Linux binaries.
+
 ## Install
 
 You don't need to clone the repo. Pick one:
@@ -42,8 +45,9 @@ You don't need to clone the repo. Pick one:
 mise use -g github:suethttps/npm-jail
 ```
 
-`mise` resolves the latest GitHub release, downloads the right binary for your
-platform, and puts it on `PATH`. Pin a version with `github:suethttps/npm-jail@v0.1.0`.
+`mise` resolves the latest GitHub release, downloads the right Linux binary for
+your architecture, and puts it on `PATH`. Pin a version with
+`github:suethttps/npm-jail@v0.1.0`.
 
 ### curl
 
