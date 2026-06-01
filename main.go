@@ -164,6 +164,8 @@ func main() {
 		return
 	}
 
+	// TODO: Check for bwrap before building/running the command and return a
+	// clearer install hint instead of relying on exec.Command's ENOENT error.
 	cmd := exec.Command("bwrap", args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -184,6 +186,8 @@ func parseArgs(in []string) (cliFlags, error) {
 		a := in[i]
 		switch a {
 		case "--help", "-h":
+			// TODO: Return a parse result for help/version instead of calling os.Exit
+			// inside parseArgs, so CLI behavior can be tested without subprocesses.
 			fmt.Print(usage)
 			os.Exit(0)
 		case "--version":
@@ -284,7 +288,7 @@ func loadConfig(cwd string) (*fileConfig, error) {
 func writeSampleConfig(cwd string) error {
 	path := filepath.Join(cwd, configName)
 	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("%s ja existe", configName)
+		return fmt.Errorf("%s already exists", configName)
 	}
 	sample := fileConfig{
 		NoNet:       false,
@@ -321,6 +325,8 @@ func buildBwrapArgs(cwd string, cfg config) ([]string, error) {
 	}
 
 	// System root, read-only. /usr + usr-merge symlink recreation.
+	// TODO: Consider masking stable machine identifiers such as /etc/machine-id
+	// and /var/lib/dbus/machine-id to reduce fingerprinting from lifecycle scripts.
 	add("--ro-bind", "/usr", "/usr")
 	for _, link := range []string{"/bin", "/sbin", "/lib", "/lib64", "/lib32"} {
 		addRootEntry(&a, link)
@@ -332,6 +338,8 @@ func buildBwrapArgs(cwd string, cfg config) ([]string, error) {
 	}
 
 	// Pseudo-filesystems and ephemeral dirs.
+	// TODO: Replace the broad /dev bind with a smaller device allowlist if Node/npm
+	// do not need full host device visibility.
 	add("--proc", "/proc")
 	add("--dev", "/dev")
 	add("--tmpfs", "/tmp")
@@ -349,6 +357,9 @@ func buildBwrapArgs(cwd string, cfg config) ([]string, error) {
 
 	// Node toolchain (node/npm/npx). Comes AFTER the home tmpfs because it often
 	// lives under $HOME (for example, mise).
+	// TODO: Special-case system Node paths such as /usr/bin/node. With
+	// --allow-global, toolchain=/usr would remount /usr read-write, which is much
+	// broader than intended.
 	if cfg.allowGlobal {
 		add("--bind", toolchain, toolchain)
 	} else {
@@ -356,6 +367,8 @@ func buildBwrapArgs(cwd string, cfg config) ([]string, error) {
 	}
 
 	// npm cache (read-write) and .npmrc (read-only, if it exists).
+	// TODO: Normalize npm_config_cache through mustAbs before binding it; npm
+	// accepts relative cache paths, but bwrap binds should be explicit host paths.
 	cache := npmCacheDir(home)
 	add("--bind-try", cache, cache)
 	npmrc := filepath.Join(home, ".npmrc")
@@ -377,6 +390,8 @@ func buildBwrapArgs(cwd string, cfg config) ([]string, error) {
 	}
 
 	// Environment: inherit from host, but pin HOME, PATH and cwd.
+	// TODO: Add an optional env allowlist/clearenv mode so shell secrets exposed in
+	// environment variables are not inherited by lifecycle scripts by default.
 	path := binDir + ":/usr/bin:/usr/local/bin"
 	add("--setenv", "HOME", home)
 	add("--setenv", "PATH", path)
@@ -398,6 +413,8 @@ func buildBwrapArgs(cwd string, cfg config) ([]string, error) {
 func addResolvConf(a *[]string) {
 	real, err := filepath.EvalSymlinks("/etc/resolv.conf")
 	if err != nil {
+		// TODO: Surface this in verbose mode; silent DNS setup failures make network
+		// issues inside the jail harder to diagnose.
 		return
 	}
 	fi, err := os.Lstat("/etc/resolv.conf")
@@ -450,6 +467,8 @@ func resolveNodeToolchain() (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("could not resolve node path: %w", err)
 	}
+	// TODO: Validate that npm and npx resolve inside the same toolchain. Some
+	// distro layouts split node and npm across different prefixes.
 	binDir := filepath.Dir(real)      // .../bin
 	toolchain := filepath.Dir(binDir) // .../<version>
 	return toolchain, binDir, nil
