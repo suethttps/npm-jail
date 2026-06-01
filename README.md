@@ -151,4 +151,4 @@ working.
 
 ## License
 
-[GPL-3.0](LICENSE), following [ai-jail](https://github.com/akitaonrails/ai-jail).
+[GPL-3.0](LICENSE)
