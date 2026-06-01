@@ -29,19 +29,41 @@ your `~/.ssh`, `~/.aws`, `~/.gnupg`, shell history, nor write outside the projec
 
 ## Requirements
 
-- `bwrap` (bubblewrap) — `pacman -S bubblewrap`
+- Linux with `bwrap` (bubblewrap) — `pacman -S bubblewrap` / `apt install bubblewrap`
 - `node`/`npm` on `PATH` (tested with Node via [mise](https://mise.jdx.dev/))
-- Go 1.26+ only to build
 
-## Build
+## Install
+
+You don't need to clone the repo. Pick one:
+
+### mise (recommended)
 
 ```bash
-go build -o npm-jail .
-# optional: put it on PATH
-install -Dm755 npm-jail ~/.local/bin/npm-jail
+mise use -g github:suethttps/npm-jail
 ```
 
-(In this repository Go is provided by `mise`; run `mise exec -- go build -o npm-jail .`.)
+`mise` resolves the latest GitHub release, downloads the right binary for your
+platform, and puts it on `PATH`. Pin a version with `github:suethttps/npm-jail@v0.1.0`.
+
+### curl
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/suethttps/npm-jail/master/install.sh | sh
+```
+
+Installs into `~/.local/bin` by default. Override with `NPM_JAIL_BIN_DIR` or pin a
+version with `NPM_JAIL_VERSION=v0.1.0`.
+
+Both methods fetch a prebuilt binary from the [GitHub releases](https://github.com/suethttps/npm-jail/releases).
+
+## Build from source (development only)
+
+Go 1.26+. In this repository Go is provided by `mise`:
+
+```bash
+mise exec -- go build -o npm-jail .
+install -Dm755 npm-jail ~/.local/bin/npm-jail   # optional
+```
 
 ## Usage
 
@@ -95,6 +117,22 @@ of file + CLI; CLI booleans override (`--net` forces the network on even with
 `"no_net": true`). Use `--no-config` to ignore the file. Relative paths are
 resolved from the project; `~/` expands to `$HOME`.
 
+## Releasing
+
+Releases are fully automated by [GoReleaser](https://goreleaser.com) via GitHub
+Actions. To cut a release, push a `v*` tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The `release` workflow builds the Linux `amd64`/`arm64` binaries, packages them as
+`npm-jail_Linux_<arch>.tar.gz` (the naming `mise`/`ubi` auto-detect), generates
+checksums and a changelog, and publishes the GitHub release — which is what both
+install methods above consume. Test the build locally without publishing with
+`goreleaser release --snapshot --clean`.
+
 ## How it works
 
 `npm-jail` doesn't call npm directly: it assembles the `bwrap` argument list, sets
@@ -106,3 +144,7 @@ Portability detail: on *usr-merge* distros (Arch, Fedora…), `/bin`, `/sbin`,
 since `/etc/resolv.conf` usually points into `/run` (wiped by the tmpfs), with the
 network open the real file is remounted at the symlink's target so DNS keeps
 working.
+
+## License
+
+[GPL-3.0](LICENSE), following [ai-jail](https://github.com/akitaonrails/ai-jail).
