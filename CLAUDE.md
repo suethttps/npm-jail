@@ -36,12 +36,25 @@ Unit tests live in `main_test.go`. Verify changes by:
 ## Releasing / distribution
 
 - Distribution is binary-only via GitHub releases — users never clone. Install is
-  `mise use -g github:suethttps/npm-jail` or the `install.sh` curl one-liner.
+  `mise use -g github:suethttps/npm-jail` or direct curl/tar from the GitHub
+  release assets. Arch Linux users can install `npm-jail-bin` from the AUR.
 - `.goreleaser.yaml` defines the build (Linux amd64/arm64 only — bwrap is Linux).
-  `.github/workflows/release.yml` runs it on every `v*` tag; `ci.yml` validates
-  build/vet/goreleaser-config on PRs.
+  `.github/workflows/release.yml` runs it on every manually pushed `v*` tag;
+  `ci.yml` validates build/vet/goreleaser-config on PRs.
+- `.github/workflows/auto-release.yml` creates the next patch tag and publishes
+  a release after merges to `master`, but intentionally only for binary-affecting
+  changes: `**/*.go`, `go.mod`, `go.sum`, and `.goreleaser.yaml`. Documentation,
+  CI-only, and repo metadata changes must not create a new app release by
+  themselves.
+- If the project grows beyond a single `main.go`, keep new Go files covered by
+  the existing `**/*.go` auto-release path filter. If future release artifacts
+  depend on new non-Go files, add them explicitly to the auto-release `paths`
+  list.
 - Archive name is `npm-jail_Linux_<x86_64|aarch64>.tar.gz` — keep this template
   intact, it's what mise's `github`/ubi backend matches against.
+- `.github/scripts/publish-aur.sh` updates the `npm-jail-bin` AUR package after
+  releases when the `AUR_SSH_PRIVATE_KEY` repository secret is configured. The
+  key's public half must be registered in the maintainer's AUR account.
 - `var version` in `main.go` is overridden at release build time via
   `-ldflags -X main.version=<tag>` (exposed by `--version`); local builds say `dev`.
 
