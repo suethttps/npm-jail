@@ -29,8 +29,12 @@ your `~/.ssh`, `~/.aws`, `~/.gnupg`, shell history, nor write outside the projec
 
 ## Requirements
 
-- Linux with `bwrap` (bubblewrap) — `pacman -S bubblewrap` / `apt install bubblewrap`
 - `node`/`npm` on `PATH` (tested with Node via [mise](https://mise.jdx.dev/))
+
+> [!WARNING]
+> `npm-jail` requires Linux with `bubblewrap` (`bwrap`) installed. Install it
+> first with your distro package manager, for example `sudo pacman -S bubblewrap`
+> on Arch Linux or `sudo apt install bubblewrap` on Debian/Ubuntu.
 
 macOS is not supported natively: `npm-jail` depends on Linux namespaces through
 `bubblewrap`, and releases only ship Linux binaries.
