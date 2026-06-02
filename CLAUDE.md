@@ -33,6 +33,12 @@ Unit tests live in `main_test.go`. Verify changes by:
    ```
    This exercises the real threat model (a lifecycle script) end to end.
 
+Before committing, always run the test/lint validation set:
+`mise exec -- go test ./...`, `mise exec -- go vet ./...`,
+`mise exec -- goreleaser check`, and `git diff --check`. If those pass and the
+user has asked to commit, create the commit without asking again; keep unrelated
+worktree changes out of the commit.
+
 ## Releasing / distribution
 
 - Distribution is binary-only via GitHub releases — users never clone. Install is
