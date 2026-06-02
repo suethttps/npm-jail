@@ -97,6 +97,7 @@ npm-jail [npm-jail flags] <npm arguments>
 npm-jail install express           # install inside the sandbox
 npm-jail ci                         # clean install (lockfile)
 npm-jail --no-net run build         # offline build, no network at all
+npm-jail --hide-env run build       # hide project .env* files for this command
 npm-jail --rw ./out run package     # additionally allow ./out to be written
 npm-jail --dry-run install          # just print the bwrap command line
 ```
@@ -114,6 +115,8 @@ They must come **before** the npm arguments. The first unrecognized token (or a
 | `--ro PATH` | Mounts an extra `PATH` read-only (repeatable). |
 | `--allow-global` | Makes the Node toolchain read-write (allows `npm i -g`). |
 | `--share-home` | Does **not** tmpfs `$HOME` (exposes the real home). Insecure; debugging only. |
+| `--hide-env` | Hides project `.env*` files by binding them to `/dev/null`. Automatic for `install`, `i`, `ci`, and `add`; pass it explicitly for `run dev`, `run build`, etc. |
+| `--no-hide-env` | Disables the automatic `.env*` hiding for install commands. |
 | `--no-config` | Ignores the project's `.npm-jail` file. |
 | `--init` | Creates a sample `.npm-jail` in the current directory and exits. |
 | `--verbose`, `-v` | Prints the full `bwrap` command line before running. |
@@ -138,6 +141,11 @@ Precedence: **CLI flags win** over the file. The `rw`/`ro` lists are the **union
 of file + CLI; CLI booleans override (`--net` forces the network on even with
 `"no_net": true`). Use `--no-config` to ignore the file. Relative paths are
 resolved from the project; `~/` expands to `$HOME`.
+
+Project `.env*` files are hidden automatically for install-style commands because
+malicious lifecycle scripts should not need application secrets. Other commands
+keep `.env*` visible by default so dev/build workflows keep working; use
+`--hide-env` when you want those commands to hide project env files too.
 
 ## Releasing
 

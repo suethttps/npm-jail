@@ -22,6 +22,7 @@
 //	npm-jail [npm-jail flags] <npm arguments>
 //	npm-jail install express
 //	npm-jail --no-net run build
+//	npm-jail --hide-env run build
 //	npm-jail --rw ./dist ci
 //	npm-jail --dry-run install        # only prints the bwrap command line
 package main
@@ -51,6 +52,7 @@ USAGE:
 EXAMPLES:
     npm-jail install express
     npm-jail --no-net run build
+    npm-jail --hide-env run build
     npm-jail --rw ./out --ro ~/.config/some ci
     npm-jail --dry-run install
     npm-jail --init                    # creates a sample .npm-jail
@@ -64,6 +66,9 @@ FLAGS for npm-jail (must come BEFORE npm arguments):
     --allow-global     Mount the Node toolchain read-write (allows npm i -g).
     --share-home       Do NOT tmpfs $HOME (exposes the real home). Insecure;
                        use only for debugging.
+    --hide-env         Hide project .env* files from the npm command. This is
+                       automatic for install/ci/add; pass it for run/build.
+    --no-hide-env      Do not hide project .env* files, even for install/ci/add.
     --no-config        Ignore the project's .npm-jail file.
     --init             Create a sample .npm-jail in the current directory and exit.
     --verbose, -v      Print the full bwrap command line before executing.
@@ -87,6 +92,7 @@ type config struct {
 	noNet       bool
 	allowGlobal bool
 	shareHome   bool
+	hideEnv     bool
 	verbose     bool
 	dryRun      bool
 	rwExtra     []string
@@ -109,6 +115,7 @@ type cliFlags struct {
 	noNet       *bool
 	allowGlobal *bool
 	shareHome   *bool
+	hideEnv     *bool
 	verbose     bool
 	dryRun      bool
 	noConfig    bool
@@ -205,6 +212,10 @@ func parseArgs(in []string) (cliFlags, error) {
 			c.allowGlobal = &bTrue
 		case "--share-home":
 			c.shareHome = &bTrue
+		case "--hide-env":
+			c.hideEnv = &bTrue
+		case "--no-hide-env":
+			c.hideEnv = &bFalse
 		case "--verbose", "-v":
 			c.verbose = true
 		case "--dry-run":
@@ -250,6 +261,7 @@ func resolveConfig(cwd string, cli cliFlags) (config, error) {
 	cfg := config{
 		noNet:       fc.NoNet,
 		allowGlobal: fc.AllowGlobal,
+		hideEnv:     isNpmInstallCommand(cli.npmArgs),
 		verbose:     cli.verbose,
 		dryRun:      cli.dryRun,
 		rwExtra:     append(append([]string{}, fc.RW...), cli.rw...),
@@ -264,6 +276,9 @@ func resolveConfig(cwd string, cli cliFlags) (config, error) {
 	}
 	if cli.shareHome != nil {
 		cfg.shareHome = *cli.shareHome
+	}
+	if cli.hideEnv != nil {
+		cfg.hideEnv = *cli.hideEnv
 	}
 	return cfg, nil
 }
@@ -388,6 +403,9 @@ func buildBwrapArgs(cwd string, cfg config) ([]string, error) {
 		abs := mustAbs(home, p)
 		add("--bind-try", abs, abs)
 	}
+	if cfg.hideEnv {
+		addEnvMasks(&a, cwd)
+	}
 
 	// Environment: inherit from host, but pin HOME, PATH and cwd.
 	// TODO: Add an optional env allowlist/clearenv mode so shell secrets exposed in
@@ -401,6 +419,35 @@ func buildBwrapArgs(cwd string, cfg config) ([]string, error) {
 	add("--", "npm")
 	add(cfg.npmArgs...)
 	return a, nil
+}
+
+func isNpmInstallCommand(args []string) bool {
+	for _, arg := range args {
+		if arg == "" || strings.HasPrefix(arg, "-") {
+			continue
+		}
+		switch arg {
+		case "install", "i", "ci", "add":
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func addEnvMasks(a *[]string, cwd string) {
+	matches, err := filepath.Glob(filepath.Join(cwd, ".env*"))
+	if err != nil {
+		return
+	}
+	for _, p := range matches {
+		fi, err := os.Lstat(p)
+		if err != nil || fi.IsDir() {
+			continue
+		}
+		*a = append(*a, "--ro-bind", "/dev/null", p)
+	}
 }
 
 // addResolvConf ensures DNS inside the jail when the network is shared.
