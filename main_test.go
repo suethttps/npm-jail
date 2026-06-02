@@ -40,6 +40,24 @@ func TestParseArgsDoubleDashPassesRestToNpm(t *testing.T) {
 	}
 }
 
+func TestParseArgsHideEnvFlags(t *testing.T) {
+	cli, err := parseArgs([]string{"--hide-env", "run", "build"})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if cli.hideEnv == nil || !*cli.hideEnv {
+		t.Fatalf("--hide-env should set hideEnv=true")
+	}
+
+	cli, err = parseArgs([]string{"--no-hide-env", "install"})
+	if err != nil {
+		t.Fatalf("parseArgs returned error: %v", err)
+	}
+	if cli.hideEnv == nil || *cli.hideEnv {
+		t.Fatalf("--no-hide-env should set hideEnv=false")
+	}
+}
+
 func TestResolveConfigMergesFileAndCli(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, configName), `{
@@ -77,6 +95,44 @@ func TestResolveConfigMergesFileAndCli(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg.npmArgs, []string{"ci"}) {
 		t.Fatalf("npmArgs = %#v", cfg.npmArgs)
+	}
+}
+
+func TestResolveConfigHidesEnvForInstallByDefault(t *testing.T) {
+	cfg, err := resolveConfig(t.TempDir(), cliFlags{npmArgs: []string{"install"}})
+	if err != nil {
+		t.Fatalf("resolveConfig returned error: %v", err)
+	}
+	if !cfg.hideEnv {
+		t.Fatalf("install should hide project .env files by default")
+	}
+
+	cfg, err = resolveConfig(t.TempDir(), cliFlags{npmArgs: []string{"run", "dev"}})
+	if err != nil {
+		t.Fatalf("resolveConfig returned error: %v", err)
+	}
+	if cfg.hideEnv {
+		t.Fatalf("non-install commands should not hide project .env files by default")
+	}
+}
+
+func TestResolveConfigHideEnvCliOverride(t *testing.T) {
+	bTrue := true
+	bFalse := false
+	cfg, err := resolveConfig(t.TempDir(), cliFlags{hideEnv: &bTrue, npmArgs: []string{"run", "build"}})
+	if err != nil {
+		t.Fatalf("resolveConfig returned error: %v", err)
+	}
+	if !cfg.hideEnv {
+		t.Fatalf("--hide-env should hide project .env files for non-install commands")
+	}
+
+	cfg, err = resolveConfig(t.TempDir(), cliFlags{hideEnv: &bFalse, npmArgs: []string{"install"}})
+	if err != nil {
+		t.Fatalf("resolveConfig returned error: %v", err)
+	}
+	if cfg.hideEnv {
+		t.Fatalf("--no-hide-env should disable default .env hiding for install")
 	}
 }
 
@@ -183,6 +239,73 @@ func TestBuildBwrapArgsHonorsAllowGlobal(t *testing.T) {
 	assertContainsSequence(t, args, "--bind", toolchain, toolchain)
 	if containsSequence(args, []string{"--ro-bind", toolchain, toolchain}) {
 		t.Fatalf("allowGlobal should not mount the toolchain read-only")
+	}
+}
+
+func TestBuildBwrapArgsMasksEnvFilesWhenEnabled(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	cwd := filepath.Join(home, "project")
+	nodeBin := filepath.Join(home, ".nvm", "versions", "node", "v22.11.0", "bin")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nodeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nodePath := filepath.Join(nodeBin, "node")
+	writeFile(t, nodePath, "#!/bin/sh\n")
+	writeFile(t, filepath.Join(cwd, ".env"), "SECRET=1\n")
+	writeFile(t, filepath.Join(cwd, ".env.local"), "SECRET=2\n")
+	if err := os.Mkdir(filepath.Join(cwd, ".env.d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	restoreHome := setEnv(t, "HOME", home)
+	t.Cleanup(restoreHome)
+	restoreLookPath := stubLookPath(nodePath)
+	t.Cleanup(restoreLookPath)
+
+	args, err := buildBwrapArgs(cwd, config{hideEnv: true, npmArgs: []string{"install"}})
+	if err != nil {
+		t.Fatalf("buildBwrapArgs returned error: %v", err)
+	}
+	assertContainsSequence(t, args, "--ro-bind", "/dev/null", filepath.Join(cwd, ".env"))
+	assertContainsSequence(t, args, "--ro-bind", "/dev/null", filepath.Join(cwd, ".env.local"))
+	if containsSequence(args, []string{"--ro-bind", "/dev/null", filepath.Join(cwd, ".env.d")}) {
+		t.Fatalf("env mask should skip directories")
+	}
+	if indexOfSequence(args, []string{"--bind", cwd, cwd}) > indexOfSequence(args, []string{"--ro-bind", "/dev/null", filepath.Join(cwd, ".env")}) {
+		t.Fatalf("env masks should come after the project bind")
+	}
+}
+
+func TestBuildBwrapArgsDoesNotMaskEnvFilesWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	cwd := filepath.Join(home, "project")
+	nodeBin := filepath.Join(home, ".nvm", "versions", "node", "v22.11.0", "bin")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nodeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nodePath := filepath.Join(nodeBin, "node")
+	writeFile(t, nodePath, "#!/bin/sh\n")
+	writeFile(t, filepath.Join(cwd, ".env"), "SECRET=1\n")
+
+	restoreHome := setEnv(t, "HOME", home)
+	t.Cleanup(restoreHome)
+	restoreLookPath := stubLookPath(nodePath)
+	t.Cleanup(restoreLookPath)
+
+	args, err := buildBwrapArgs(cwd, config{npmArgs: []string{"run", "dev"}})
+	if err != nil {
+		t.Fatalf("buildBwrapArgs returned error: %v", err)
+	}
+	if containsSequence(args, []string{"--ro-bind", "/dev/null", filepath.Join(cwd, ".env")}) {
+		t.Fatalf("env mask should not be added when hideEnv is false")
 	}
 }
 
