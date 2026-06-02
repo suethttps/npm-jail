@@ -1,8 +1,9 @@
 # npm-jail
 
-Runs `npm` commands inside a [bubblewrap](https://github.com/containers/bubblewrap)
-(`bwrap`) sandbox. Inspired by [ai-jail](https://github.com/akitaonrails/ai-jail),
-but focused solely on npm.
+Runs `npm` commands inside an OS sandbox. Linux uses
+[bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`); macOS uses
+Apple's legacy `/usr/bin/sandbox-exec` interface. Inspired by
+[ai-jail](https://github.com/akitaonrails/ai-jail), but focused solely on npm.
 
 The target is the most common attack vector in the npm ecosystem: **lifecycle
 scripts** (`preinstall`/`postinstall`) of malicious packages that run arbitrary
@@ -13,31 +14,31 @@ your `~/.ssh`, `~/.aws`, `~/.gnupg`, shell history, nor write outside the projec
 
 | Resource | Policy |
 |---|---|
-| `$HOME` | **empty tmpfs** — `.ssh`, `.aws`, `.gnupg`, tokens, history: don't exist inside the jail |
+| `$HOME` | Linux: **empty tmpfs**; macOS: host home remains mounted but sensitive paths are denied by the sandbox |
 | Project directory (`cwd`) | **read-write** |
 | `/usr`, `/etc`, `/opt` | **read-only** |
 | Node toolchain (node/npm/npx) | **read-only** (read-write with `--allow-global`) |
 | `~/.npm` (cache) | **read-write** (reuses downloads) |
 | `~/.npmrc` | **read-only**, mounted only if it exists |
-| PID / UTS / IPC / cgroup | isolated namespaces |
+| PID / UTS / IPC / cgroup | Linux: isolated namespaces; macOS: not available through `sandbox-exec` |
 | Network | **shared with the host** by default (`npm install` needs it); use `--no-net` to isolate |
 
-> ⚠️ Not a VM. It relies on the correctness of the kernel and of bwrap; it's
-> **one layer** of defense-in-depth, not an absolute boundary. Network being open
-> by default means a malicious script can still exfiltrate over the network — use
-> `--no-net` when you don't need to download anything.
+> ⚠️ Not a VM. It relies on the correctness of the host OS sandbox (`bwrap` on
+> Linux, `sandbox-exec` on macOS); it's **one layer** of defense-in-depth, not an
+> absolute boundary. Network being open by default means a malicious script can
+> still exfiltrate over the network — use `--no-net` when you don't need to
+> download anything.
 
 ## Requirements
 
 - `node`/`npm` on `PATH` (tested with Node via [mise](https://mise.jdx.dev/))
+- Linux: `bubblewrap` (`bwrap`)
+- macOS: `/usr/bin/sandbox-exec` (provided by macOS, deprecated by Apple)
 
 > [!WARNING]
-> `npm-jail` requires Linux with `bubblewrap` (`bwrap`) installed. Install it
-> first with your distro package manager, for example `sudo pacman -S bubblewrap`
-> on Arch Linux or `sudo apt install bubblewrap` on Debian/Ubuntu.
-
-macOS is not supported natively: `npm-jail` depends on Linux namespaces through
-`bubblewrap`, and releases only ship Linux binaries.
+> The Linux and macOS sandboxes are not equivalent. Linux gets mount and namespace
+> isolation through `bwrap`; macOS gets Seatbelt filesystem/network rules through
+> the legacy `sandbox-exec` command, without tmpfs `$HOME` or Linux namespaces.
 
 ## Install
 
@@ -66,6 +67,20 @@ Linux aarch64:
 
 ```bash
 curl -fsSL https://github.com/suethttps/npm-jail/releases/latest/download/npm-jail_Linux_aarch64.tar.gz | tar xz
+sudo mv npm-jail /usr/local/bin/
+```
+
+macOS Apple Silicon:
+
+```bash
+curl -fsSL https://github.com/suethttps/npm-jail/releases/latest/download/npm-jail_Darwin_aarch64.tar.gz | tar xz
+sudo mv npm-jail /usr/local/bin/
+```
+
+macOS Intel:
+
+```bash
+curl -fsSL https://github.com/suethttps/npm-jail/releases/latest/download/npm-jail_Darwin_x86_64.tar.gz | tar xz
 sudo mv npm-jail /usr/local/bin/
 ```
 
@@ -103,7 +118,7 @@ npm-jail ci                         # clean install (lockfile)
 npm-jail --no-net run build         # offline build, no network at all
 npm-jail --hide-env run build       # hide project .env* files for this command
 npm-jail --rw ./out run package     # additionally allow ./out to be written
-npm-jail --dry-run install          # just print the bwrap command line
+npm-jail --dry-run install          # just print the sandbox command
 ```
 
 ### npm-jail flags
@@ -166,19 +181,20 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The release workflows build the Linux `amd64`/`arm64` binaries, package them as
-`npm-jail_Linux_<arch>.tar.gz` (the naming `mise`/`ubi` auto-detect), generate
-checksums and a changelog, and publish the GitHub release, which is what both
-direct download and `mise` consume. If `AUR_SSH_PRIVATE_KEY` is configured in
-the repository secrets, the workflows also update `npm-jail-bin` in the AUR.
-Test the build locally without publishing with
+The release workflows build Linux and macOS `amd64`/`arm64` binaries, package
+them as `npm-jail_<OS>_<arch>.tar.gz` (the naming `mise`/`ubi` auto-detect),
+generate checksums and a changelog, and publish the GitHub release, which is what
+both direct download and `mise` consume. If `AUR_SSH_PRIVATE_KEY` is configured
+in the repository secrets, the workflows also update `npm-jail-bin` in the AUR
+using the Linux assets only. Test the build locally without publishing with
 `goreleaser release --snapshot --clean`.
 
 ## How it works
 
-`npm-jail` doesn't call npm directly: it assembles the `bwrap` argument list, sets
-up the isolated filesystem, and then runs `npm <args>` inside it. See exactly what
-gets mounted with `--dry-run`.
+`npm-jail` doesn't call npm directly: it assembles the platform sandbox command
+and then runs `npm <args>` inside it. On Linux that command is `bwrap`; on macOS
+it is `sandbox-exec` with a generated SBPL profile. See exactly what gets applied
+with `--dry-run`.
 
 Portability detail: on *usr-merge* distros (Arch, Fedora…), `/bin`, `/sbin`,
 `/lib`, `/lib64` are symlinks to `/usr/*` — the jail recreates those symlinks. And

@@ -4,14 +4,16 @@ Guidance for working in this repository.
 
 ## What this is
 
-`npm-jail` is a small Go CLI that runs `npm` commands inside a
-[bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) sandbox, so
+`npm-jail` is a small Go CLI that runs `npm` commands inside an OS sandbox, so
 malicious package lifecycle scripts (`preinstall`/`postinstall`) can't read
-secrets (`~/.ssh`, `~/.aws`, …) or write outside the project. See `README.md`
-for the user-facing docs and the full security model.
+secrets (`~/.ssh`, `~/.aws`, …) or write outside the project. Linux uses
+[bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`); macOS uses
+Apple's legacy `/usr/bin/sandbox-exec` interface. See `README.md` for the
+user-facing docs and the full security model.
 
-The tool does **not** reimplement npm: it assembles a `bwrap` argument list and
-`exec`s `bwrap … -- npm <args>`.
+The tool does **not** reimplement npm: it assembles a platform sandbox command
+and `exec`s either `bwrap … -- npm <args>` on Linux or
+`sandbox-exec -p <profile> -- npm <args>` on macOS.
 
 ## Build & run
 
@@ -44,7 +46,7 @@ worktree changes out of the commit.
 - Distribution is binary-only via GitHub releases — users never clone. Install is
   `mise use -g github:suethttps/npm-jail` or direct curl/tar from the GitHub
   release assets. Arch Linux users can install `npm-jail-bin` from the AUR.
-- `.goreleaser.yaml` defines the build (Linux amd64/arm64 only — bwrap is Linux).
+- `.goreleaser.yaml` defines the build (Linux and macOS amd64/arm64).
   `.github/workflows/release.yml` runs it on every manually pushed `v*` tag;
   `ci.yml` validates build/vet/goreleaser-config on PRs.
 - `.github/workflows/auto-release.yml` creates the next patch tag and publishes
@@ -56,8 +58,8 @@ worktree changes out of the commit.
   the existing `**/*.go` auto-release path filter. If future release artifacts
   depend on new non-Go files, add them explicitly to the auto-release `paths`
   list.
-- Archive name is `npm-jail_Linux_<x86_64|aarch64>.tar.gz` — keep this template
-  intact, it's what mise's `github`/ubi backend matches against.
+- Archive name is `npm-jail_<Linux|Darwin>_<x86_64|aarch64>.tar.gz` — keep this
+  template intact, it's what mise's `github`/ubi backend matches against.
 - `.github/scripts/publish-aur.sh` updates the `npm-jail-bin` AUR package after
   releases when the `AUR_SSH_PRIVATE_KEY` repository secret is configured. The
   key's public half must be registered in the maintainer's AUR account.
@@ -73,8 +75,15 @@ worktree changes out of the commit.
 
 ## Architecture (`main.go`)
 
-Flow: `parseArgs` → `resolveConfig` (merge file + CLI) → `buildBwrapArgs` →
-`exec.Command("bwrap", …)`.
+Flow: `parseArgs` → `resolveConfig` (merge file + CLI) →
+`buildSandboxCommand` → `exec.Command(...)`.
+
+- `buildSandboxCommand` selects the backend by `runtime.GOOS`: Linux keeps
+  `buildBwrapArgs`; macOS uses `buildSandboxExecArgs` and a generated SBPL
+  profile for `/usr/bin/sandbox-exec`.
+- macOS does not have Linux namespace/tmpfs parity. The backend is mainly
+  filesystem/network policy: reads are broadly allowed with explicit sensitive
+  path denials, writes are limited to project/cache/temp/explicit `rw` paths.
 
 - `cliFlags` uses `*bool` for `noNet`/`allowGlobal`/`shareHome` to distinguish
   "not given" from "given as false". This is what makes the file↔CLI merge

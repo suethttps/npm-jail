@@ -16,9 +16,9 @@ builds:
     binary: npm-jail
     env:
       - CGO_ENABLED=0
-    # npm-jail depends on bubblewrap (bwrap), which only exists on Linux.
     goos:
       - linux
+      - darwin
     goarch:
       - amd64
       - arm64
