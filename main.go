@@ -24,7 +24,7 @@
 //	npm-jail --no-net run build
 //	npm-jail --hide-env run build
 //	npm-jail --rw ./dist ci
-//	npm-jail --dry-run install        # only prints the bwrap command line
+//	npm-jail --dry-run install        # only prints the sandbox command line
 package main
 
 import (
@@ -33,6 +33,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -44,7 +45,7 @@ var version = "dev"
 
 var lookPath = exec.LookPath
 
-const usage = `npm-jail - run npm inside a bubblewrap sandbox
+const usage = `npm-jail - run npm inside an OS sandbox
 
 USAGE:
     npm-jail [npm-jail flags] <npm arguments>
@@ -71,8 +72,8 @@ FLAGS for npm-jail (must come BEFORE npm arguments):
     --no-hide-env      Do not hide project .env* files, even for install/ci/add.
     --no-config        Ignore the project's .npm-jail file.
     --init             Create a sample .npm-jail in the current directory and exit.
-    --verbose, -v      Print the full bwrap command line before executing.
-    --dry-run          Print the bwrap command line and exit without executing.
+    --verbose, -v      Print the full sandbox command before executing.
+    --dry-run          Print the sandbox command and exit without executing.
     --help, -h         Show this help.
     --version          Show the version and exit.
 
@@ -98,6 +99,12 @@ type config struct {
 	rwExtra     []string
 	roExtra     []string
 	npmArgs     []string
+}
+
+type sandboxCommand struct {
+	program string
+	args    []string
+	dryRun  string
 }
 
 // fileConfig is the .npm-jail file format.
@@ -158,22 +165,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	args, err := buildBwrapArgs(cwd, cfg)
+	sandbox, err := buildSandboxCommand(cwd, cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "npm-jail: "+err.Error())
 		os.Exit(1)
 	}
 
 	if cfg.verbose || cfg.dryRun {
-		fmt.Fprintln(os.Stderr, "bwrap "+shellQuote(args))
+		fmt.Fprintln(os.Stderr, sandbox.dryRun)
 	}
 	if cfg.dryRun {
 		return
 	}
 
-	// TODO: Check for bwrap before building/running the command and return a
-	// clearer install hint instead of relying on exec.Command's ENOENT error.
-	cmd := exec.Command("bwrap", args...)
+	cmd := exec.Command(sandbox.program, sandbox.args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -181,7 +186,7 @@ func main() {
 		if exit, ok := err.(*exec.ExitError); ok {
 			os.Exit(exit.ExitCode())
 		}
-		fmt.Fprintln(os.Stderr, "npm-jail: failed to execute bwrap: "+err.Error())
+		fmt.Fprintln(os.Stderr, "npm-jail: failed to execute "+sandbox.program+": "+err.Error())
 		os.Exit(1)
 	}
 }
@@ -318,6 +323,41 @@ func writeSampleConfig(cwd string) error {
 	return os.WriteFile(path, append(data, '\n'), 0o644)
 }
 
+func buildSandboxCommand(cwd string, cfg config) (sandboxCommand, error) {
+	switch runtime.GOOS {
+	case "linux":
+		args, err := buildBwrapArgs(cwd, cfg)
+		if err != nil {
+			return sandboxCommand{}, err
+		}
+		return sandboxCommand{
+			program: "bwrap",
+			args:    args,
+			dryRun:  "bwrap " + shellQuote(args),
+		}, nil
+	case "darwin":
+		args, profile, err := buildSandboxExecArgs(cwd, cfg)
+		if err != nil {
+			return sandboxCommand{}, err
+		}
+		return sandboxCommand{
+			program: "/usr/bin/sandbox-exec",
+			args:    args,
+			dryRun:  formatSandboxExecDryRun(args, profile),
+		}, nil
+	default:
+		return sandboxCommand{}, fmt.Errorf("unsupported OS %q: npm-jail supports Linux and macOS", runtime.GOOS)
+	}
+}
+
+func formatSandboxExecDryRun(args []string, profile string) string {
+	shown := append([]string{}, args...)
+	if len(shown) >= 2 && shown[0] == "-p" {
+		shown[1] = "<profile>"
+	}
+	return "sandbox-exec " + shellQuote(shown) + "\n\n# SBPL profile:\n" + profile
+}
+
 func buildBwrapArgs(cwd string, cfg config) ([]string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -421,6 +461,184 @@ func buildBwrapArgs(cwd string, cfg config) ([]string, error) {
 	return a, nil
 }
 
+func buildSandboxExecArgs(cwd string, cfg config) ([]string, string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return nil, "", fmt.Errorf("could not determine $HOME")
+	}
+
+	toolchain, binDir, err := resolveNodeToolchain()
+	if err != nil {
+		return nil, "", err
+	}
+
+	profile := buildMacOSSandboxProfile(cwd, home, toolchain, cfg)
+	path := binDir + ":/usr/bin:/usr/local/bin:/opt/homebrew/bin"
+	args := []string{"-p", profile, "--", "/usr/bin/env", "HOME=" + home, "PATH=" + path, "npm"}
+	args = append(args, cfg.npmArgs...)
+	return args, profile, nil
+}
+
+func buildMacOSSandboxProfile(cwd, home, toolchain string, cfg config) string {
+	var b strings.Builder
+	b.WriteString("(version 1)\n")
+	b.WriteString("(deny default)\n\n")
+
+	b.WriteString("; Process operations\n")
+	b.WriteString("(allow process-exec)\n")
+	b.WriteString("(allow process-fork)\n")
+	b.WriteString("(allow process-info* (target same-sandbox))\n")
+	b.WriteString("(allow signal)\n")
+	b.WriteString("(allow sysctl-read)\n\n")
+
+	b.WriteString("; IPC, terminals and devices\n")
+	b.WriteString("(allow mach-lookup)\n")
+	b.WriteString("(allow mach-register)\n")
+	b.WriteString("(allow mach-host*)\n")
+	b.WriteString("(allow ipc-posix-shm-read-data)\n")
+	b.WriteString("(allow ipc-posix-shm-write-data)\n")
+	b.WriteString("(allow ipc-posix-shm-read-metadata)\n")
+	b.WriteString("(allow ipc-posix-shm-write-create)\n")
+	b.WriteString("(allow ipc-posix-sem)\n")
+	b.WriteString("(allow pseudo-tty)\n")
+	b.WriteString("(allow file-ioctl)\n")
+	b.WriteString("(allow file-read* file-write* (literal \"/dev/ptmx\"))\n")
+	b.WriteString("(allow file-read* file-write* (regex #\"^/dev/ttys[0-9]+\"))\n")
+	b.WriteString("(allow file-read* file-write* (literal \"/dev/null\"))\n")
+	b.WriteString("(allow file-read* file-write* (literal \"/dev/zero\"))\n")
+	b.WriteString("(allow file-read* (literal \"/dev/random\"))\n")
+	b.WriteString("(allow file-read* (literal \"/dev/urandom\"))\n")
+	b.WriteString("(allow iokit-open)\n\n")
+
+	if !cfg.noNet {
+		b.WriteString("; Network\n")
+		b.WriteString("(allow network-outbound)\n")
+		b.WriteString("(allow network-inbound)\n")
+		b.WriteString("(allow network-bind)\n")
+		b.WriteString("(allow system-socket)\n\n")
+	}
+
+	b.WriteString("; File reads: broadly allowed, with sensitive paths denied below\n")
+	b.WriteString("(allow file-read*)\n")
+	for _, p := range macOSSensitiveReadDenyPaths(home, cwd, cfg) {
+		writeSBPLPathRule(&b, "deny", "file-read*", p)
+	}
+	b.WriteByte('\n')
+
+	b.WriteString("; File writes: allow only project, npm cache, temp, and explicit rw paths\n")
+	for _, p := range macOSWritablePaths(cwd, home, toolchain, cfg) {
+		writeSBPLPathRule(&b, "allow", "file-write*", p)
+	}
+	return b.String()
+}
+
+func macOSSensitiveReadDenyPaths(home, cwd string, cfg config) []string {
+	if cfg.shareHome {
+		return nil
+	}
+	paths := []string{
+		filepath.Join(home, ".ssh"),
+		filepath.Join(home, ".aws"),
+		filepath.Join(home, ".gnupg"),
+		filepath.Join(home, ".netrc"),
+		filepath.Join(home, ".bash_history"),
+		filepath.Join(home, ".zsh_history"),
+		filepath.Join(home, "Library", "Mail"),
+		filepath.Join(home, "Library", "Messages"),
+		filepath.Join(home, "Library", "Safari"),
+		filepath.Join(home, "Library", "Cookies"),
+	}
+	if cfg.hideEnv {
+		paths = append(paths, envMaskPaths(cwd)...)
+	}
+	return existingPaths(paths)
+}
+
+func macOSWritablePaths(cwd, home, toolchain string, cfg config) []string {
+	paths := []string{
+		cwd,
+		npmCacheDir(home),
+		"/tmp",
+		"/private/tmp",
+		"/private/var/tmp",
+		"/private/var/folders",
+	}
+	if tmpdir := os.Getenv("TMPDIR"); tmpdir != "" {
+		paths = append(paths, tmpdir)
+	}
+	if cfg.shareHome {
+		paths = append(paths, home)
+	}
+	if cfg.allowGlobal {
+		paths = append(paths, toolchain)
+	}
+	for _, p := range cfg.rwExtra {
+		paths = append(paths, mustAbs(home, p))
+	}
+	return existingPaths(paths)
+}
+
+func existingPaths(paths []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, p := range paths {
+		if p == "" || !pathExists(p) {
+			continue
+		}
+		canonical := canonicalizeOrKeep(p)
+		if seen[canonical] {
+			continue
+		}
+		seen[canonical] = true
+		out = append(out, canonical)
+	}
+	return out
+}
+
+func writeSBPLPathRule(b *strings.Builder, action, op, path string) {
+	kind := "literal"
+	if isDir(path) {
+		kind = "subpath"
+	}
+	b.WriteString("(")
+	b.WriteString(action)
+	b.WriteByte(' ')
+	b.WriteString(op)
+	b.WriteString(" (")
+	b.WriteString(kind)
+	b.WriteString(" \"")
+	b.WriteString(sbplEscape(path))
+	b.WriteString("\"))\n")
+}
+
+func sbplEscape(s string) string {
+	var b strings.Builder
+	for _, c := range s {
+		switch c {
+		case '\\':
+			b.WriteString("\\\\")
+		case '"':
+			b.WriteString("\\\"")
+		case '\n':
+			b.WriteString("\\n")
+		case '\r':
+			b.WriteString("\\r")
+		case '\t':
+			b.WriteString("\\t")
+		default:
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
+}
+
+func canonicalizeOrKeep(p string) string {
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return real
+	}
+	return p
+}
+
 func isNpmInstallCommand(args []string) bool {
 	for _, arg := range args {
 		if arg == "" || strings.HasPrefix(arg, "-") {
@@ -437,17 +655,25 @@ func isNpmInstallCommand(args []string) bool {
 }
 
 func addEnvMasks(a *[]string, cwd string) {
+	for _, p := range envMaskPaths(cwd) {
+		*a = append(*a, "--ro-bind", "/dev/null", p)
+	}
+}
+
+func envMaskPaths(cwd string) []string {
 	matches, err := filepath.Glob(filepath.Join(cwd, ".env*"))
 	if err != nil {
-		return
+		return nil
 	}
+	var paths []string
 	for _, p := range matches {
 		fi, err := os.Lstat(p)
 		if err != nil || fi.IsDir() {
 			continue
 		}
-		*a = append(*a, "--ro-bind", "/dev/null", p)
+		paths = append(paths, p)
 	}
+	return paths
 }
 
 // addResolvConf ensures DNS inside the jail when the network is shared.
@@ -535,6 +761,11 @@ func isDir(p string) bool {
 
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
+	return err == nil
+}
+
+func pathExists(p string) bool {
+	_, err := os.Lstat(p)
 	return err == nil
 }
 

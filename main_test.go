@@ -309,6 +309,62 @@ func TestBuildBwrapArgsDoesNotMaskEnvFilesWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestBuildSandboxExecArgsGeneratesMacOSProfile(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	cwd := filepath.Join(home, "project")
+	nodeBin := filepath.Join(home, ".nvm", "versions", "node", "v22.11.0", "bin")
+	for _, p := range []string{cwd, nodeBin, filepath.Join(home, ".ssh"), filepath.Join(home, ".npm")} {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nodePath := filepath.Join(nodeBin, "node")
+	writeFile(t, nodePath, "#!/bin/sh\n")
+	writeFile(t, filepath.Join(cwd, ".env"), "SECRET=1\n")
+
+	restoreHome := setEnv(t, "HOME", home)
+	t.Cleanup(restoreHome)
+	restoreLookPath := stubLookPath(nodePath)
+	t.Cleanup(restoreLookPath)
+
+	args, profile, err := buildSandboxExecArgs(cwd, config{hideEnv: true, npmArgs: []string{"install"}})
+	if err != nil {
+		t.Fatalf("buildSandboxExecArgs returned error: %v", err)
+	}
+	assertContainsSequence(t, args, "-p", profile, "--", "/usr/bin/env")
+	if !strings.Contains(profile, "(deny default)") {
+		t.Fatalf("profile should deny by default:\n%s", profile)
+	}
+	if !strings.Contains(profile, "(allow network-outbound)") {
+		t.Fatalf("network should be allowed by default:\n%s", profile)
+	}
+	if !strings.Contains(profile, `(deny file-read* (subpath "`+filepath.Join(home, ".ssh")+`"))`) {
+		t.Fatalf("profile should deny .ssh reads:\n%s", profile)
+	}
+	if !strings.Contains(profile, `(deny file-read* (literal "`+filepath.Join(cwd, ".env")+`"))`) {
+		t.Fatalf("profile should deny .env reads when hideEnv is enabled:\n%s", profile)
+	}
+	if !strings.Contains(profile, `(allow file-write* (subpath "`+cwd+`"))`) {
+		t.Fatalf("profile should allow project writes:\n%s", profile)
+	}
+}
+
+func TestBuildMacOSProfileNoNetOmitsNetwork(t *testing.T) {
+	profile := buildMacOSSandboxProfile("/tmp/project", "/tmp/home", "/tmp/node", config{noNet: true})
+	if strings.Contains(profile, "network-outbound") || strings.Contains(profile, "network-inbound") {
+		t.Fatalf("--no-net should omit network rules:\n%s", profile)
+	}
+}
+
+func TestSBPLEscape(t *testing.T) {
+	got := sbplEscape("/tmp/with\"quote\\slash")
+	want := `/tmp/with\"quote\\slash`
+	if got != want {
+		t.Fatalf("sbplEscape = %q, want %q", got, want)
+	}
+}
+
 func TestNpmCacheDirUsesEnvOverride(t *testing.T) {
 	restore := setEnv(t, "npm_config_cache", "/tmp/npm-cache")
 	t.Cleanup(restore)
