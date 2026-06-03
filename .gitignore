@@ -1,3 +1,4 @@
 npm-jail
 *.test
 dist/
+docs/.obsidian/
